@@ -2,6 +2,7 @@
 #include "MQTTNetwork.h"
 #include "MQTTmbed.h"
 #include "MQTTClient.h"
+#include "stm32l475e_iot01_accelero.h"
 
 // GLOBAL VARIABLES
 WiFiInterface *wifi;
@@ -12,6 +13,10 @@ volatile int arrivedcount = 0;
 volatile bool closed = false;
 
 const char* topic = "Mbed";
+
+int16_t pDataXYZ[3] = {0};
+int idR[32] = {0};
+int indexR = 0;
 
 Thread mqtt_thread(osPriorityHigh);
 EventQueue mqtt_queue;
@@ -29,10 +34,12 @@ void messageArrived(MQTT::MessageData& md) {
 }
 
 void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
+    BSP_ACCELERO_AccGetXYZ(pDataXYZ);
     message_num++;
     MQTT::Message message;
     char buff[100];
-    sprintf(buff, "QoS0 Hello, Python! #%d", message_num);
+    sprintf(buff, "QoS0 Hello, Python! # %d,%d, %d", pDataXYZ[0], pDataXYZ[1], pDataXYZ[2]);
+    printf("%d, %d, %d", pDataXYZ[0], pDataXYZ[1], pDataXYZ[2]);
     message.qos = MQTT::QOS0;
     message.retained = false;
     message.dup = false;
@@ -44,6 +51,16 @@ void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
     printf("Puslish message: %s\r\n", buff);
 }
 
+void startRecord(MQTT::Client<MQTTNetwork, Countdown>* client) {
+   printf("---start---\n");
+   idR[indexR++] = mqtt_queue.call_every(500ms, publish_message, client);
+   indexR = indexR % 32;
+}
+void stopRecord(void) {
+   printf("---stop---\n");
+   for (auto &i : idR)
+      mqtt_queue.cancel(i);
+}
 void close_mqtt() {
     closed = true;
 }
@@ -98,8 +115,9 @@ int main() {
     }
 
     mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
-    btn2.rise(mqtt_queue.event(&publish_message, &client));
-    //btn3.rise(&close_mqtt);
+    BSP_ACCELERO_Init();
+    btn2.fall(mqtt_queue.event(&startRecord, &client));
+    btn2.rise(mqtt_queue.event(stopRecord));
 
     int num = 0;
     while (num != 5) {
